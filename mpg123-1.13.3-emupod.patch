@@ -1,0 +1,106 @@
+diff -ru mpg123-1.13.3-org/src/common.c mpg123-1.13.3/src/common.c
+--- mpg123-1.13.3-org/src/common.c	2021-06-08 21:03:04.754502700 +0200
++++ mpg123-1.13.3/src/common.c	2011-06-19 23:23:16.000000000 +0200
+@@ -233,6 +233,37 @@
+ 	if( mpg123_meta_check(fr) & MPG123_NEW_ICY && MPG123_OK == mpg123_icy(fr, &icy) )
+ 	fprintf(stderr, "\nICY-META: %s\n", icy);
+ }
++/* HJA */
++void print_timestamp(mpg123_handle *fr, long offset, long buffsize)
++{
++	double tim1,tim2;
++	off_t rno, no;
++#ifndef WIN32
++#ifndef GENERIC
++/* Only generate new stat line when stderr is ready... don't overfill... */
++	{
++		struct timeval t;
++		fd_set serr;
++		int n,errfd = fileno(stderr);
++
++		t.tv_sec=t.tv_usec=0;
++
++		FD_ZERO(&serr);
++		FD_SET(errfd,&serr);
++		n = select(errfd+1,NULL,&serr,NULL,&t);
++		if(n <= 0) return;
++	}
++#endif
++#endif
++	if(    MPG123_OK == mpg123_position(fr, offset, buffsize, &no, &rno, &tim1, &tim2) )
++	{
++		tim2 += tim1;	// Calc total time
++		fprintf(stderr, "TIME: %lu %lu\n",
++		        (((unsigned long) tim1/60)*60 + ((unsigned int)tim1%60))*1000 + ((unsigned int)(tim1*1000)%1000),
++		        (((unsigned long) tim2/60)*60 + ((unsigned int)tim2%60))*1000 + ((unsigned int)(tim2*1000)%1000));
++	}
++}
++/* end HJA */
+ 
+ void clear_stat()
+ {
+diff -ru mpg123-1.13.3-org/src/common.h mpg123-1.13.3/src/common.h
+--- mpg123-1.13.3-org/src/common.h	2021-06-08 21:03:04.485664100 +0200
++++ mpg123-1.13.3/src/common.h	2011-06-13 18:05:41.000000000 +0200
+@@ -15,7 +15,10 @@
+ 
+ void print_header(mpg123_handle *);
+ void print_header_compact(mpg123_handle *);
++/* HJA */
+ void print_stat(mpg123_handle *fr, long offset, long buffsize);
++/* end HJA */
++void print_timestamp(mpg123_handle *fr, long offset, long buffsize);
+ void clear_stat();
+ /* for control_generic */
+ extern const char* remote_header_help;
+diff -ru mpg123-1.13.3-org/src/mpg123.c mpg123-1.13.3/src/mpg123.c
+--- mpg123-1.13.3-org/src/mpg123.c	2021-06-08 21:03:04.457286200 +0200
++++ mpg123-1.13.3/src/mpg123.c	2011-06-13 17:57:52.000000000 +0200
+@@ -751,6 +751,7 @@
+ 
+ int main(int sys_argc, char ** sys_argv)
+ {
++	int printtimestamps = 0;   /* !!! HJA */
+ 	int result;
+ 	long parr;
+ 	char *fname;
+@@ -1088,6 +1089,7 @@
+ 	{
+ 		fprintf(stderr, "\033]0;%s\007", filename);
+ 	}
++	if (getenv("MPG123_TIMESTAMPS")!=NULL) printtimestamps=1;
+ }
+ #endif
+ 
+@@ -1122,11 +1124,15 @@
+ 			{
+ #ifndef NOXFERMEM
+ 				if (param.verbose > 1 || !(framenum & 0x7))
+-					print_stat(mh,0,xfermem_get_usedspace(buffermem)); 
++					print_stat(mh,0,xfermem_get_usedspace(buffermem));
+ #else
+ 				if(param.verbose > 1 || !(framenum & 0x7))	print_stat(mh,0,0);
+ #endif
+ 			}
++			/* HJA */
++			if (printtimestamps && (!(framenum & 0xf)))
++				print_timestamp(mh,0,xfermem_get_usedspace(buffermem));
++			/* end HJA */
+ #ifdef HAVE_TERMIOS
+ 			if(!param.term_ctrl) continue;
+ 			else term_control(mh, ao);
+diff -ru mpg123-1.13.3-org/src/term.c mpg123-1.13.3/src/term.c
+--- mpg123-1.13.3-org/src/term.c	2021-06-08 21:03:06.011400400 +0200
++++ mpg123-1.13.3/src/term.c	2011-06-15 22:22:51.000000000 +0200
+@@ -89,8 +89,10 @@
+ {
+   debug("term_init");
+ 
++  if (!isatty(0)) { term_enable = 1; return; }  /* HJA: Allow non-terminal ctrl */
++  
+   term_enable = 0;
+-
++  
+   if(tcgetattr(0,&old_tio) < 0) {
+     fprintf(stderr,"Can't get terminal attributes\n");
+     return;
